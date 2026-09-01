@@ -1,0 +1,104 @@
+# Firebase App Hosting configuration.
+#
+# minInstances/maxInstances are both 1 on purpose: the email poller and call
+# scheduler run as in-process intervals, so the instance must never scale to
+# zero (timers stop) and never scale past one (patients would be double-called).
+runConfig:
+  minInstances: 1
+  maxInstances: 1
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 512
+
+env:
+  # server
+  - variable: PUBLIC_BASE_URL
+    value: https://texas-ai--texas-c9a31.us-central1.hosted.app
+  - variable: TIMEZONE
+    value: America/Chicago
+  - variable: DB
+    secret: db-connection-string
+  - variable: ADMIN_API_KEY
+    secret: admin-api-key
+
+  # intake mailbox
+  - variable: IMAP_HOST
+    value: imap.gmail.com
+  - variable: IMAP_PORT
+    value: "993"
+  - variable: IMAP_SECURE
+    value: "true"
+  - variable: IMAP_USER
+    value: team@smbwebtech.com
+  - variable: IMAP_PASSWORD
+    secret: imap-password
+  - variable: IMAP_MAILBOX
+    value: INBOX
+  - variable: EMAIL_POLL_INTERVAL_MS
+    value: "60000"
+
+  # openai
+  - variable: OPENAI_API_KEY
+    secret: openai-api-key
+  - variable: OPENAI_EXTRACTION_MODEL
+    value: gpt-5.1
+  - variable: OPENAI_REALTIME_MODEL
+    value: gpt-realtime
+  - variable: OPENAI_REALTIME_VOICE
+    value: alloy
+  - variable: EXTRACTION_INTERVAL_MS
+    value: "20000"
+
+  # google sheets
+  - variable: GOOGLE_SHEET_ID
+    value: 1trNJQ_ca3nm5aAnrTrcdaDPhnFdzuI0AwmO75E1s4Fw
+  - variable: GOOGLE_SHEET_TAB
+    value: TIN ALL
+  - variable: GOOGLE_SERVICE_ACCOUNT_JSON
+    secret: google-service-account-json
+  - variable: SHEET_INTAKE_TAG
+    value: AI 2026
+  - variable: SHEET_BILLER_DEFAULT
+    value: DIRECT
+  - variable: SHEET_FC_DEFAULT
+    value: LOP
+
+  # twilio
+  - variable: TWILIO_ACCOUNT_SID
+    secret: twilio-account-sid
+  - variable: TWILIO_AUTH_TOKEN
+    secret: twilio-auth-token
+  - variable: TWILIO_FROM_NUMBER
+    value: "+12819576350"
+  - variable: TWILIO_VALIDATE_WEBHOOKS
+    value: "false"
+  - variable: CLINIC_CALLBACK_NUMBER
+    value: "+12818256966"
+
+  # calling behaviour
+  - variable: CALL_SCHEDULER_INTERVAL_MS
+    value: "60000"
+  - variable: CALL_MAX_ATTEMPTS
+    value: "3"
+  - variable: CALL_RETRY_HOURS
+    value: "4"
+  - variable: CALL_RING_TIMEOUT_SEC
+    value: "30"
+  - variable: CALL_HOURS_START
+    value: "9"
+  - variable: CALL_HOURS_END
+    value: "19"
+  - variable: CALLS_PER_TICK
+    value: "2"
+  - variable: SMS_ON_MISSED_CALL
+    value: "true"
+
+  # booking window
+  - variable: BOOKING_HOURS_START
+    value: "8"
+  - variable: BOOKING_HOURS_END
+    value: "18"
+  - variable: BOOKING_DAYS_AHEAD
+    value: "14"
+  - variable: BOOKING_INCLUDE_SATURDAY
+    value: "false"

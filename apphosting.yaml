@@ -12,8 +12,9 @@ runConfig:
 
 env:
   # server
+# direct Cloud Run URL: the hosted.app proxy breaks the Twilio media websocket
   - variable: PUBLIC_BASE_URL
-    value: https://texas-ai--texas-c9a31.us-central1.hosted.app
+    value: https://texas-ai-2pkenvoy2q-uc.a.run.app
   - variable: TIMEZONE
     value: America/Chicago
   - variable: DB

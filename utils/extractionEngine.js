@@ -8,6 +8,8 @@ const { REFERRAL_STATUS } = require('../constants/referralStatus')
 const Referral = () => mongoose.model('referrals')
 
 const MAX_EXTRACTION_ATTEMPTS = 3
+// how long a work claim holds before another process may retry the referral
+const CLAIM_LEASE_MS = 5 * 60 * 1000
 
 function s(value) {
     return value == null ? '' : String(value).trim()
@@ -81,14 +83,19 @@ function slipStatus(slip) {
 /** Phase A: run the OpenAI extraction agent over freshly received attachments. */
 async function extractPending() {
     if (!process.env.OPENAI_API_KEY) return
-    const referral = await Referral().findOne({
-        status: REFERRAL_STATUS.RECEIVED,
-        extractionAttempts: { $lt: MAX_EXTRACTION_ATTEMPTS },
-    }).sort({ createdAt: 1 })
+    // atomic claim: overlapping processes (deploy switchover) must not both take it
+    const claimExpired = new Date(Date.now() - CLAIM_LEASE_MS)
+    const referral = await Referral().findOneAndUpdate(
+        {
+            status: REFERRAL_STATUS.RECEIVED,
+            extractionAttempts: { $lt: MAX_EXTRACTION_ATTEMPTS },
+            $or: [{ extractClaimedAt: null }, { extractClaimedAt: { $lt: claimExpired } }],
+        },
+        { $inc: { extractionAttempts: 1 }, $set: { extractClaimedAt: new Date() } },
+        { sort: { createdAt: 1 }, new: true }
+    )
     if (!referral) return
 
-    referral.extractionAttempts += 1
-    await referral.save()
     try {
         const { slips = [] } = await openaiClient.extractSlipsFromFile(referral.attachmentPath, referral.attachmentMime) || {}
         if (!slips.length) {
@@ -131,7 +138,16 @@ async function extractPending() {
 /** Phase B: append extracted referrals to the Google Sheet log. */
 async function logPending() {
     if (!googleSheets.isConfigured()) return
-    const referral = await Referral().findOne({ status: REFERRAL_STATUS.EXTRACTED }).sort({ createdAt: 1 })
+    // atomic claim, same reasoning as extractPending
+    const claimExpired = new Date(Date.now() - CLAIM_LEASE_MS)
+    const referral = await Referral().findOneAndUpdate(
+        {
+            status: REFERRAL_STATUS.EXTRACTED,
+            $or: [{ logClaimedAt: null }, { logClaimedAt: { $lt: claimExpired } }],
+        },
+        { $set: { logClaimedAt: new Date() } },
+        { sort: { createdAt: 1 }, new: true }
+    )
     if (!referral) return
 
     try {

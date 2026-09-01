@@ -27,6 +27,10 @@ const referralSchema = new mongoose.Schema({
     status: { type: String, enum: Object.values(REFERRAL_STATUS), default: REFERRAL_STATUS.RECEIVED, index: true },
     lastError: { type: String, default: '' },
     extractionAttempts: { type: Number, default: 0 },
+    // work-claim leases so overlapping processes (e.g. during a deploy) never
+    // pick up the same referral twice
+    extractClaimedAt: { type: Date, default: null },
+    logClaimedAt: { type: Date, default: null },
 
     // extracted slip data
     patient: {

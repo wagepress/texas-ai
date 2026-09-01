@@ -61,9 +61,13 @@ function refDocName(name = '') {
 function dobPhoneCell(referral) {
     const pieces = []
     if (referral.patient?.dob) pieces.push(`DOB ${referral.patient.dob}`)
+    const seen = new Set()
     for (const key of ['primaryPhone', 'secondaryPhone', 'alternatePhone']) {
         const value = displayPhone(referral.patient?.[key])
-        if (value && /\d{3}-\d{3}-\d{4}/.test(value)) pieces.push(`#${value}`)
+        if (value && /\d{3}-\d{3}-\d{4}/.test(value) && !seen.has(value)) {
+            seen.add(value)
+            pieces.push(`#${value}`)
+        }
     }
     return pieces.length ? pieces.join(' ') : '-'
 }

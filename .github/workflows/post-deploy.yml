@@ -1,0 +1,40 @@
+# After every App Hosting rollout, reassert the Cloud Run settings the
+# background jobs depend on (always-allocated CPU + one warm instance).
+# App Hosting builds fresh revisions per push and does not manage these flags.
+name: post-deploy settings
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  reassert-run-settings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Wait for App Hosting rollout of this commit
+        run: |
+          START_REV=$(gcloud run services describe texas-ai --region us-central1 --format='value(status.latestReadyRevisionName)')
+          echo "revision before rollout: $START_REV"
+          for i in $(seq 1 40); do
+            sleep 30
+            CUR=$(gcloud run services describe texas-ai --region us-central1 --format='value(status.latestReadyRevisionName)')
+            if [ "$CUR" != "$START_REV" ]; then
+              echo "new revision ready: $CUR"
+              break
+            fi
+            echo "waiting... ($i)"
+          done
+
+      - name: Reapply CPU + min-instance settings
+        run: |
+          gcloud run services update texas-ai --region us-central1 \
+            --no-cpu-throttling --min-instances 1 -q
+          gcloud run services update-traffic texas-ai --region us-central1 --to-latest -q
+          gcloud run services describe texas-ai --region us-central1 --format=json \
+            | python3 -c "import json,sys; a=json.load(sys.stdin)['spec']['template']['metadata']['annotations']; print('cpu-throttling:', a.get('run.googleapis.com/cpu-throttling'), '| minScale:', a.get('autoscaling.knative.dev/minScale'))"

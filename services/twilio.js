@@ -56,8 +56,14 @@ async function startVerificationCall(to, callSessionId) {
         asyncAmdStatusCallback: `${baseUrl()}/api/voice/amd?sessionId=${callSessionId}`,
         asyncAmdStatusCallbackMethod: 'POST',
         timeout: Number(process.env.CALL_RING_TIMEOUT_SEC || 30),
+        timeLimit: Number(process.env.CALL_MAX_DURATION_SEC || 900),
     })
     return call
+}
+
+/** Hang up an in-progress call (agent goodbye, silence timeout). */
+async function endCall(callSid) {
+    await getClient().calls(callSid).update({ status: 'completed' })
 }
 
 /** Swap an in-progress call to the voicemail TwiML (used by the AMD webhook). */
@@ -83,4 +89,4 @@ function validateWebhook(req) {
     return twilio.validateRequest(process.env.TWILIO_AUTH_TOKEN, signature, url, req.body || {})
 }
 
-module.exports = { isConfigured, getClient, startVerificationCall, redirectToVoicemail, sendSms, validateWebhook, streamUrl }
+module.exports = { isConfigured, getClient, startVerificationCall, redirectToVoicemail, endCall, sendSms, validateWebhook, streamUrl }

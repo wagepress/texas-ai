@@ -4,6 +4,7 @@ const { z } = require('zod')
 const { RealtimeAgent, RealtimeSession, tool } = require('@openai/agents/realtime')
 const { TwilioRealtimeTransportLayer } = require('@openai/agents-extensions')
 const googleSheets = require('../services/googleSheets')
+const twilioService = require('../services/twilio')
 const { suggestSlots, validateSlot } = require('../utils/slots')
 const { finalizeCall } = require('../utils/callScheduler')
 const { CALL_OUTCOMES, REFERRAL_STATUS } = require('../constants/referralStatus')
@@ -32,7 +33,7 @@ ${referral.attorney ? `- The referral came through their attorney/case: ${referr
 
 Call flow:
 1. Greet, say you are calling from Texas Imaging Network about the imaging study their doctor ${referral.doctor.name || ''} ordered, and ask if you are speaking with ${patientFirst}.
-2. If it is the wrong person or a wrong number, apologize, call save_call_outcome with outcome "wrong_number", and end the call politely.
+2. If it is the wrong person or a wrong number, apologize, call save_call_outcome with outcome "wrong_number", say goodbye and call end_call.
 3. Verify identity: ask them to confirm their date of birth. Compare with the one on file. Then confirm the best callback phone number. Record everything with record_verification.
 4. ${hasMri ? `MRI safety screening - ask one at a time and record with record_screening:
    - Have they had an MRI before?
@@ -43,12 +44,13 @@ Call flow:
    - Their approximate height and weight.` : 'Ask if they have any relevant prior surgeries or procedures and record with record_screening.'}
 5. Scheduling: call get_available_slots, offer two or three options, and agree on one. If they want a different day/time, ask for it and try book_appointment - it validates the request and tells you if the office is closed. Once book_appointment returns success, repeat the confirmed date and time back to them.
 6. If they refuse to schedule, call save_call_outcome with outcome "declined". If they ask to be called back later, use outcome "callback_requested".
-7. Close: remind them ${hasMri ? 'not to wear metal and ' : ''}to arrive 15 minutes early with a photo ID, tell them our number is ${callback} if anything changes, thank them, and say goodbye.
+7. Close: remind them ${hasMri ? 'not to wear metal and ' : ''}to arrive 15 minutes early with a photo ID, tell them our number is ${callback} if anything changes, thank them, say goodbye, and call end_call.
 
 Rules:
 - Do not give medical advice or discuss results, costs, insurance or legal matters. For such questions say the front desk at ${callback} can help, and note it in the outcome summary.
 - If the patient corrects the name, birth date or phone we have on file, record the correction with record_verification.
-- Always call save_call_outcome (or complete book_appointment) before the call ends so nothing is lost.`
+- Always call save_call_outcome (or complete book_appointment) before the call ends so nothing is lost.
+- The line does NOT disconnect on its own: every conversation ends with you saying goodbye and then calling end_call - after booking, after a decline, after a wrong number, or when the patient stops responding.`
 }
 
 /** "PT SCH, YES MRI, NO CLAUS, NO METAL, NO SURG, 5'4 140LBS" style booking note */
@@ -203,7 +205,23 @@ function buildTools(referralId, callSessionId) {
         },
     })
 
-    return [getAvailableSlots, recordVerification, recordScreening, bookAppointment, saveCallOutcome]
+    const endCall = tool({
+        name: 'end_call',
+        description: 'Hang up the phone line. Call this AFTER you have said goodbye; the audio finishes playing before the line drops.',
+        parameters: z.object({}),
+        execute: async () => {
+            const session = await CallSession().findById(callSessionId)
+            if (!session?.twilioCallSid) return 'no active call to hang up'
+            // small grace period so the goodbye audio reaches the patient
+            setTimeout(() => {
+                twilioService.endCall(session.twilioCallSid).catch(err =>
+                    console.error('voiceStream: hangup failed', err.message))
+            }, 4 * 1000)
+            return 'hanging up - say nothing further'
+        },
+    })
+
+    return [getAvailableSlots, recordVerification, recordScreening, bookAppointment, saveCallOutcome, endCall]
 }
 
 function extractTranscript(item) {
@@ -265,7 +283,41 @@ async function handleConnection(twilioWebSocket, sessionId) {
         console.error('voiceStream: realtime error', err?.error || err)
     })
 
+    // silence watchdog: VAD only reacts to speech, so a patient who answers and
+    // says nothing would otherwise hold the line open until Twilio's timeLimit.
+    // Nudge twice, then hang up and finalize.
+    const nudgeAfterSec = Number(process.env.CALL_SILENCE_NUDGE_SEC || 20)
+    const maxNudges = Number(process.env.CALL_SILENCE_MAX_NUDGES || 2)
+    let lastAudioAt = Date.now()
+    let nudges = 0
+    session.on('transport_event', (event) => {
+        const type = event?.type || ''
+        if (type === 'input_audio_buffer.speech_started' || type.endsWith('audio.delta') || type === 'response.done') {
+            lastAudioAt = Date.now()
+            if (type === 'input_audio_buffer.speech_started') nudges = 0
+        }
+    })
+    const silenceTimer = setInterval(() => {
+        if (Date.now() - lastAudioAt < nudgeAfterSec * 1000) return
+        lastAudioAt = Date.now()
+        if (nudges < maxNudges) {
+            nudges += 1
+            session.transport.sendEvent({
+                type: 'response.create',
+                response: { instructions: 'The patient has been silent for a while. Briefly ask if they are still there. Do not repeat earlier questions.' },
+            })
+            return
+        }
+        clearInterval(silenceTimer)
+        console.log(`voiceStream: silence timeout, hanging up session ${callSession._id}`)
+        twilioService.endCall(callSession.twilioCallSid).catch(err =>
+            console.error('voiceStream: silence hangup failed', err.message))
+        finalizeCall(callSession._id, CALL_OUTCOMES.INCOMPLETE, { reason: 'silence timeout' })
+            .catch(err => console.error('voiceStream: silence finalize failed', err.message))
+    }, 5 * 1000)
+
     twilioWebSocket.on('close', async () => {
+        clearInterval(silenceTimer)
         try {
             session.close()
         } catch (_err) { /* already closed */ }

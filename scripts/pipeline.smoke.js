@@ -167,7 +167,7 @@ async function main() {
     const tools = buildTools(r1._id.toString(), session._id.toString())
     const byName = Object.fromEntries(tools.map(t => [t.name, t]))
     assert.deepStrictEqual(Object.keys(byName).sort(),
-        ['book_appointment', 'get_available_slots', 'record_screening', 'record_verification', 'save_call_outcome'])
+        ['book_appointment', 'end_call', 'get_available_slots', 'record_screening', 'record_verification', 'save_call_outcome'])
 
     const slots = JSON.parse(await byName.get_available_slots.invoke({}, '{}'))
     assert.ok(slots.length >= 3, 'slots offered')

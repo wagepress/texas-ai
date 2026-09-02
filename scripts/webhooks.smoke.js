@@ -53,7 +53,7 @@ async function main() {
     const answer = await post(base, `/api/voice/answer?sessionId=${session._id}`, { CallSid: 'CAxyz' })
     assert.strictEqual(answer.status, 200)
     assert.ok(answer.body.includes('<Connect>'), answer.body)
-    assert.ok(answer.body.includes(`wss://example.test/ws/voice?sessionId=${session._id}`), answer.body)
+    assert.ok(answer.body.includes(`wss://example.test/ws/voice/${session._id}`), answer.body)
 
     // answer with unknown session -> polite hangup
     const bad = await post(base, `/api/voice/answer?sessionId=${new mongoose.Types.ObjectId()}`, {})

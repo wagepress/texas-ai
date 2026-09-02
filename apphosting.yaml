@@ -85,6 +85,12 @@ env:
     value: "4"
   - variable: CALL_RING_TIMEOUT_SEC
     value: "30"
+  - variable: CALL_MAX_DURATION_SEC
+    value: "900"
+  - variable: CALL_SILENCE_NUDGE_SEC
+    value: "20"
+  - variable: CALL_SILENCE_MAX_NUDGES
+    value: "2"
   - variable: CALL_HOURS_START
     value: "9"
   - variable: CALL_HOURS_END

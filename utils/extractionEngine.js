@@ -63,11 +63,14 @@ function bestPhone(referral) {
         normalizePhone(referral.patient?.alternatePhone)
 }
 
-/** A same-patient same-study referral already in flight means this scan is a re-send. */
+/** A same-patient same-study referral arriving within the window is a re-send of
+ * the same slip. Older matches are a genuine new order (patients repeat studies). */
 async function findDuplicate(referral) {
     if (!referral.patient?.lastName || !referral.patient?.dob) return null
+    const windowDays = Number(process.env.DUPLICATE_WINDOW_DAYS || 30)
     return Referral().findOne({
         _id: { $ne: referral._id },
+        createdAt: { $gte: new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000) },
         'patient.lastName': new RegExp(`^${referral.patient.lastName}$`, 'i'),
         'patient.dob': referral.patient.dob,
         'studies.description': { $in: referral.studies.map(st => st.description) },
@@ -156,6 +159,7 @@ async function logPending() {
             referral.status = REFERRAL_STATUS.NEEDS_REVIEW
             referral.extractionNotes = `Possible duplicate of referral ${duplicate._id} (same patient + study), not logged to sheet`
             await referral.save()
+            console.log(`extractionEngine: referral ${referral._id} looks like a re-send of ${duplicate._id}, held for review`)
             return
         }
 

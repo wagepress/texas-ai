@@ -36,7 +36,7 @@ env:
   - variable: IMAP_MAILBOX
     value: INBOX
   - variable: EMAIL_POLL_INTERVAL_MS
-    value: "60000"
+    value: "300000"
 
   # openai
   - variable: OPENAI_API_KEY

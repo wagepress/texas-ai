@@ -311,7 +311,7 @@ async function handleConnection(twilioWebSocket, sessionId) {
                         type: 'server_vad',
                         threshold: Number(process.env.CALL_VAD_THRESHOLD || 0.7),
                         prefixPaddingMs: 300,
-                        silenceDurationMs: Number(process.env.CALL_VAD_SILENCE_MS || 700),
+                        silenceDurationMs: Number(process.env.CALL_VAD_SILENCE_MS || 500),
                         interruptResponse: true,
                     },
                 },
@@ -329,6 +329,28 @@ async function handleConnection(twilioWebSocket, sessionId) {
             { $set: { transcript: lines.map(l => ({ role: l.role, text: l.text, at: new Date() })) } }
         ).catch(() => { })
     })
+    // turn latency as the server sees it (excludes the phone network): patient
+    // stops talking -> first agent audio, plus any tool time inside that gap
+    const latency = { stoppedAt: 0, toolMs: 0, tools: [], turns: [] }
+    session.on('transport_event', (event) => {
+        if (event?.type === 'input_audio_buffer.speech_stopped') {
+            Object.assign(latency, { stoppedAt: Date.now(), toolMs: 0, tools: [] })
+        } else if (event?.type?.endsWith('audio.delta') && latency.stoppedAt) {
+            const ms = Date.now() - latency.stoppedAt
+            latency.turns.push(ms)
+            console.log(`voiceStream: turn latency ${ms}ms${latency.tools.length ? ` (tools ${latency.tools.join(',')} ${latency.toolMs}ms)` : ''} session ${callSession._id}`)
+            latency.stoppedAt = 0
+        }
+    })
+    const toolStarted = new Map()
+    session.on('agent_tool_start', (_ctx, _agent, tool, { toolCall }) => toolStarted.set(toolCall.callId, Date.now()))
+    session.on('agent_tool_end', (_ctx, _agent, tool, _result, { toolCall }) => {
+        const ms = Date.now() - (toolStarted.get(toolCall.callId) || Date.now())
+        toolStarted.delete(toolCall.callId)
+        latency.tools.push(tool.name)
+        latency.toolMs += ms
+    })
+
     session.on('error', (err) => {
         console.error('voiceStream: realtime error', err?.error || err)
     })
@@ -368,6 +390,10 @@ async function handleConnection(twilioWebSocket, sessionId) {
 
     twilioWebSocket.on('close', async () => {
         clearInterval(silenceTimer)
+        if (latency.turns.length) {
+            const sorted = [...latency.turns].sort((a, b) => a - b)
+            console.log(`voiceStream: session ${callSession._id} ${sorted.length} turns, median ${sorted[Math.floor(sorted.length / 2)]}ms, max ${sorted[sorted.length - 1]}ms`)
+        }
         try {
             session.close()
         } catch (_err) { /* already closed */ }

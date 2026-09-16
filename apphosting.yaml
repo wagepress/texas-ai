@@ -93,6 +93,13 @@ env:
     value: "20"
   - variable: CALL_SILENCE_MAX_NUDGES
     value: "2"
+  - variable: CALL_VAD_SILENCE_MS
+    value: "500"
+  - variable: CALL_VAD_THRESHOLD
+    value: "0.7"
+  # audio debugging: dual-channel recordings of these test numbers only (never patients)
+  - variable: CALL_RECORD_NUMBERS
+    value: "+923472743550"
   - variable: CALL_HOURS_START
     value: "9"
   - variable: CALL_HOURS_END

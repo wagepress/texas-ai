@@ -42,6 +42,10 @@ function streamUrl(callSessionId) {
  * runs in parallel; when a machine picks up the AMD webhook swaps the call
  * to a voicemail message.
  */
+function recordNumbers() {
+    return (process.env.CALL_RECORD_NUMBERS || '').split(',').map(n => n.trim()).filter(Boolean)
+}
+
 async function startVerificationCall(to, callSessionId) {
     const call = await getClient().calls.create({
         to,
@@ -57,6 +61,9 @@ async function startVerificationCall(to, callSessionId) {
         asyncAmdStatusCallbackMethod: 'POST',
         timeout: Number(process.env.CALL_RING_TIMEOUT_SEC || 30),
         timeLimit: Number(process.env.CALL_MAX_DURATION_SEC || 900),
+        // audio-quality debugging only: record test numbers (never patients) with
+        // caller and agent on separate channels
+        ...(recordNumbers().includes(to) ? { record: true, recordingChannels: 'dual' } : {}),
     })
     return call
 }

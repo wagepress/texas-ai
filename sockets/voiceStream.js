@@ -56,6 +56,9 @@ Call flow:
 Rules:
 - Do not give medical advice or discuss results, costs, insurance or legal matters. For such questions say the front desk at ${callback} can help, and note it in the outcome summary.
 - If the patient corrects the name, birth date or phone we have on file, record the correction with record_verification (dates always as MM/DD/YYYY).
+- Filler sounds ("uh", "um", "hello?", a single word in another language) are not answers. Never record a screening answer you didn't clearly hear - ask the question again in simpler words.
+- If the patient interrupts you, stop and listen; don't restart your whole sentence, just continue from what they said.
+- After you call end_call, do not say anything else.
 - Say dates the way people do ("Tuesday, August 11th at 10 AM", "August 11th, 1993"), never as digits or slashes.
 - Always call save_call_outcome (or complete book_appointment) before the call ends so nothing is lost.
 - The line does NOT disconnect on its own: every conversation ends with you saying goodbye and then calling end_call - after booking, after a decline, after a wrong number, or when the patient stops responding.`
@@ -289,7 +292,22 @@ async function handleConnection(twilioWebSocket, sessionId) {
         config: {
             audio: {
                 output: { voice: process.env.OPENAI_REALTIME_VOICE || 'marin' },
-                input: { transcription: { model: 'gpt-4o-mini-transcribe' } },
+                input: {
+                    transcription: { model: 'gpt-4o-mini-transcribe', language: 'en' },
+                    // phone handset audio: filter line noise so it doesn't count as speech
+                    noiseReduction: { type: 'near_field' },
+                    // the SDK default (semantic_vad) waits several seconds whenever a
+                    // sentence sounds unfinished ("uh...", "my date of birth is...").
+                    // Plain silence-based VAD answers promptly; the higher threshold
+                    // keeps background noise from cutting the agent off mid-sentence.
+                    turnDetection: {
+                        type: 'server_vad',
+                        threshold: Number(process.env.CALL_VAD_THRESHOLD || 0.6),
+                        prefixPaddingMs: 300,
+                        silenceDurationMs: Number(process.env.CALL_VAD_SILENCE_MS || 700),
+                        interruptResponse: true,
+                    },
+                },
             },
         },
     })

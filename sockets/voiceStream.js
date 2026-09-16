@@ -41,7 +41,7 @@ Call flow:
    - unclear: casually ask them to say it again, e.g. "Sorry, could you give me the month, day and year?"
    - mismatch: read back what you heard in plain words ("I have August 11th, 1993 - is that right?"). If they confirm their own date, accept it as a correction to our records and continue.
    A date-of-birth problem is NEVER a wrong number and never a reason to end the call.
-   Then confirm the best callback phone number. Record everything with ONE record_verification call.
+   Then confirm the best callback phone number. A matching date of birth is saved automatically. Only call record_verification if something differs from our records (a corrected date of birth, a different phone number, a different name), and say your next question in that same turn.
 4. ${hasMri ? `MRI safety screening - ask the questions one at a time and just keep the answers in mind. Call record_screening ONCE, together with your next sentence, after the last answer - never after each question:
    - Have they had an MRI before?
    - Are they claustrophobic?
@@ -104,7 +104,11 @@ function buildTools(referralId, callSessionId) {
             const referral = await Referral().findById(referralId)
             if (!referral) return 'referral not found'
             const check = compareDob(input.stated_dob, referral.patient.dob)
-            if (check.result === 'match') return 'match - date of birth confirmed'
+            if (check.result === 'match') {
+                // record it here so the agent needs no second tool round (each one is a silent pause)
+                await Referral().updateOne({ _id: referralId }, { $set: { 'call.verified': true, 'call.correctedInfo.dobMatches': true } })
+                return 'match - date of birth confirmed and already recorded. Thank them and ask your next question now; do not call record_verification for this.'
+            }
             if (check.result === 'no_dob_on_file') return `no_dob_on_file - accept what they said and record it as corrected_dob (${formatDob(input.stated_dob)})`
             if (check.result === 'unclear') return 'unclear - could not understand that date; politely ask for month, day and year again'
             return `mismatch - you heard ${spokenDob(check.heard)} (${check.heard}). Read it back to confirm; if they confirm, record it as corrected_dob and continue. This is NOT a wrong number.`

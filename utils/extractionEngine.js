@@ -1,9 +1,12 @@
+const fs = require('fs')
+const path = require('path')
 const mongoose = require('mongoose')
 const openaiClient = require('../services/openaiClient')
 const googleSheets = require('../services/googleSheets')
 const { buildRowsForReferral } = require('./sheetRows')
 const { normalizePhone, noteStamp } = require('./helpers')
 const { REFERRAL_STATUS } = require('../constants/referralStatus')
+const { isActiveWorker } = require('./workerLease')
 
 const Referral = () => mongoose.model('referrals')
 
@@ -83,6 +86,15 @@ function slipStatus(slip) {
     return REFERRAL_STATUS.EXTRACTED
 }
 
+/** The attachment may have been saved by another instance; restore it from the DB copy. */
+async function ensureLocalFile(referral) {
+    if (referral.attachmentPath && fs.existsSync(referral.attachmentPath)) return
+    const stored = await Referral().findById(referral._id).select('+attachmentData').lean()
+    if (!stored?.attachmentData) throw new Error(`attachment missing on this instance and no stored copy: ${referral.attachmentPath}`)
+    fs.mkdirSync(path.dirname(referral.attachmentPath), { recursive: true })
+    fs.writeFileSync(referral.attachmentPath, stored.attachmentData.buffer || stored.attachmentData)
+}
+
 /** Phase A: run the OpenAI extraction agent over freshly received attachments. */
 async function extractPending() {
     if (!process.env.OPENAI_API_KEY) return
@@ -100,6 +112,7 @@ async function extractPending() {
     if (!referral) return
 
     try {
+        await ensureLocalFile(referral)
         const { slips = [] } = await openaiClient.extractSlipsFromFile(referral.attachmentPath, referral.attachmentMime) || {}
         if (!slips.length) {
             referral.status = REFERRAL_STATUS.NEEDS_REVIEW
@@ -197,6 +210,7 @@ function startExtractionEngine() {
         if (running) return
         running = true
         try {
+            if (!(await isActiveWorker())) return
             await extractPending()
             await logPending()
         } catch (err) {

@@ -22,6 +22,9 @@ const referralSchema = new mongoose.Schema({
     attachmentPath: { type: String, default: '' },
     attachmentName: { type: String, default: '' },
     attachmentMime: { type: String, default: '' },
+    // copy of the file bytes: the local disk is per-instance and wiped on every
+    // deploy, so whichever instance extracts restores the file from here
+    attachmentData: { type: Buffer, select: false },
     slipIndex: { type: Number, default: 0 },           // index of the slip inside the attachment
 
     status: { type: String, enum: Object.values(REFERRAL_STATUS), default: REFERRAL_STATUS.RECEIVED, index: true },

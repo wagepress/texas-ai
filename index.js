@@ -12,6 +12,7 @@ require('./mongoose')
 require('./models/referral')
 require('./models/callSession')
 require('./models/emailMessage')
+require('./models/workerLease')
 
 app.use(cors())
 app.use(bodyParser.json({ limit: '25mb' }))

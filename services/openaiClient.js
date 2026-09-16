@@ -105,15 +105,73 @@ const IMAGE_MIME_BY_EXT = {
     '.heic': 'image/heic', '.heif': 'image/heif',
 }
 
-function contentItemForFile(filePath, mime = '') {
+// PDF pages are rendered at ~216dpi and cut into horizontal strips no taller
+// than 768px: the vision model downsizes a whole page to 768px on its short
+// side, which turns small fax print into guesses (8/9/1976 read as 8/8/1976).
+const PDF_RENDER_SCALE = 3
+const STRIP_HEIGHT = 760
+const STRIP_OVERLAP = 120
+const MAX_PDF_PAGES = 12
+
+async function pdfPageStrips(buffer) {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs') // ESM-only package
+    const { createCanvas } = require('@napi-rs/canvas')
+    const pdfjsRoot = path.dirname(require.resolve('pdfjs-dist/package.json'))
+    const loadingTask = pdfjs.getDocument({
+        data: new Uint8Array(buffer),
+        isEvalSupported: false,
+        // fax scans are JBIG2/CCITT images: the decoders ship as wasm next to the package
+        wasmUrl: path.join(pdfjsRoot, 'wasm') + path.sep,
+        standardFontDataUrl: path.join(pdfjsRoot, 'standard_fonts') + path.sep,
+        verbosity: 0,
+    })
+    const doc = await loadingTask.promise
+    try {
+        const pageCount = Math.min(doc.numPages, MAX_PDF_PAGES)
+        const items = []
+        for (let i = 1; i <= pageCount; i++) {
+            const page = await doc.getPage(i)
+            const viewport = page.getViewport({ scale: PDF_RENDER_SCALE })
+            const width = Math.ceil(viewport.width)
+            const height = Math.ceil(viewport.height)
+            const full = createCanvas(width, height)
+            const ctx = full.getContext('2d')
+            ctx.fillStyle = '#fff'
+            ctx.fillRect(0, 0, width, height)
+            await page.render({ canvas: full, canvasContext: ctx, viewport }).promise
+            page.cleanup()
+
+            const strips = []
+            for (let top = 0; top < height; top += STRIP_HEIGHT - STRIP_OVERLAP) {
+                const stripHeight = Math.min(STRIP_HEIGHT, height - top)
+                const strip = createCanvas(width, stripHeight)
+                strip.getContext('2d').drawImage(full, 0, top, width, stripHeight, 0, 0, width, stripHeight)
+                strips.push((await strip.encode('png')).toString('base64'))
+                if (top + STRIP_HEIGHT >= height) break
+            }
+            items.push({ type: 'input_text', text: `Page ${i} of ${pageCount}, shown as ${strips.length} overlapping horizontal strips from top to bottom:` })
+            for (const png of strips) items.push({ type: 'input_image', image: `data:image/png;base64,${png}`, detail: 'high' })
+        }
+        return items
+    } finally {
+        await loadingTask.destroy()
+    }
+}
+
+async function contentItemsForFile(filePath, mime = '') {
     const buffer = fs.readFileSync(filePath)
     const ext = path.extname(filePath).toLowerCase()
     const resolvedMime = mime || IMAGE_MIME_BY_EXT[ext] || (ext === '.pdf' ? 'application/pdf' : 'application/octet-stream')
     const dataUrl = `data:${resolvedMime};base64,${buffer.toString('base64')}`
     if (resolvedMime === 'application/pdf') {
-        return { type: 'input_file', file: dataUrl, filename: path.basename(filePath) }
+        try {
+            return await pdfPageStrips(buffer)
+        } catch (err) {
+            console.error('openaiClient: PDF render failed, sending the raw PDF instead', err.message)
+            return [{ type: 'input_file', file: dataUrl, filename: path.basename(filePath) }]
+        }
     }
-    return { type: 'input_image', image: dataUrl }
+    return [{ type: 'input_image', image: dataUrl, detail: 'high' }]
 }
 
 /**
@@ -126,7 +184,7 @@ async function extractSlipsFromFile(filePath, mime = '') {
         role: 'user',
         content: [
             { type: 'input_text', text: 'Extract every referral slip from this scan.' },
-            contentItemForFile(filePath, mime),
+            ...await contentItemsForFile(filePath, mime),
         ],
     }])
     return result.finalOutput

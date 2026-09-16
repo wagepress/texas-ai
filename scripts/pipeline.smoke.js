@@ -100,13 +100,18 @@ async function main() {
     await mongoose.connection.dropDatabase()
 
     // 1. an email attachment arrives (poller output simulated)
+    // the file only exists in the DB copy (saved by another instance / before a deploy)
+    const fakePath = require('path').join(require('os').tmpdir(), `texas-smoke-${Date.now()}`, 'fake.pdf')
     const seed = await Referral()({
         emailMessageId: '<smoke@test>', emailSubject: 'Frontdesk Scans', emailFrom: 'frontdesk@clinic.com',
-        attachmentPath: '/tmp/fake.pdf', attachmentName: 'fake.pdf', attachmentMime: 'application/pdf',
+        attachmentPath: fakePath, attachmentName: 'fake.pdf', attachmentMime: 'application/pdf',
+        attachmentData: Buffer.from('%PDF-smoke'),
     }).save()
+    assert.strictEqual((await Referral().findById(seed._id)).attachmentData, undefined, 'bytes not loaded by default')
 
     // 2. extraction: 1 attachment -> 2 slips
     await extractPending()
+    assert.strictEqual(require('fs').readFileSync(fakePath, 'utf8'), '%PDF-smoke', 'attachment restored from the DB copy')
     const all = await Referral().find().sort({ createdAt: 1 })
     assert.strictEqual(all.length, 2, 'second slip became a sibling referral')
     assert.strictEqual(all[0].status, REFERRAL_STATUS.EXTRACTED)

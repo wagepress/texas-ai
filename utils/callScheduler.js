@@ -4,6 +4,7 @@ const googleSheets = require('../services/googleSheets')
 const { REFERRAL_STATUS, CALL_OUTCOMES } = require('../constants/referralStatus')
 const { noteStamp, displayPhone } = require('./helpers')
 const { withinCallHours, nextCallWindow } = require('./slots')
+const { isActiveWorker } = require('./workerLease')
 const { bestPhone } = require('./extractionEngine')
 
 const Referral = () => mongoose.model('referrals')
@@ -188,6 +189,7 @@ function startCallScheduler() {
         if (running) return
         running = true
         try {
+            if (!(await isActiveWorker())) return
             await tickOnce()
         } catch (err) {
             console.error('callScheduler error:', err.message)

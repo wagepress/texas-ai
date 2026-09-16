@@ -33,6 +33,13 @@ Domain notes:
   `sockets/voiceStream.js`; booking validation is `utils/slots.js`.
 - DOB parsing/matching (any spoken format, stored as MM/DD/YYYY) is
   `utils/dob.js`; the agent never compares dates itself.
+- Background loops only run in the process holding the Mongo lease
+  (`utils/workerLease.js`, newest process wins) because Cloud Run revisions
+  overlap for ~15-20 min after a deploy. Attachments are stored in Mongo
+  (`referral.attachmentData`, `select: false`) since the disk is per-instance.
+- PDFs are rendered to <=768px-tall strips (`pdfjs-dist` + `@napi-rs/canvas`; pdfjs is ESM - load with
+  `import()`) before extraction; whole-page input misreads small fax digits.
 - Offline checks: `npm run smoke:sheetrows`, `npm run smoke:slots`,
-  `npm run smoke:dob`. Live
+  `npm run smoke:dob`, `npm run smoke:lease`, `npm run smoke:pipeline`
+  (local MongoDB). Live
   extraction check: `node scripts/extractFile.js <file>`.

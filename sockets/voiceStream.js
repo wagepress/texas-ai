@@ -1,7 +1,7 @@
 const { WebSocketServer } = require('ws')
 const mongoose = require('mongoose')
 const { z } = require('zod')
-const { RealtimeAgent, RealtimeSession, tool } = require('@openai/agents/realtime')
+const { RealtimeAgent, RealtimeSession, tool, backgroundResult } = require('@openai/agents/realtime')
 const { TwilioRealtimeTransportLayer } = require('@openai/agents-extensions')
 const googleSheets = require('../services/googleSheets')
 const twilioService = require('../services/twilio')
@@ -41,15 +41,15 @@ Call flow:
    - unclear: casually ask them to say it again, e.g. "Sorry, could you give me the month, day and year?"
    - mismatch: read back what you heard in plain words ("I have August 11th, 1993 - is that right?"). If they confirm their own date, accept it as a correction to our records and continue.
    A date-of-birth problem is NEVER a wrong number and never a reason to end the call.
-   Then confirm the best callback phone number. Record everything with record_verification.
-4. ${hasMri ? `MRI safety screening - ask one at a time and record with record_screening:
+   Then confirm the best callback phone number. Record everything with ONE record_verification call.
+4. ${hasMri ? `MRI safety screening - ask the questions one at a time and just keep the answers in mind. Call record_screening ONCE, together with your next sentence, after the last answer - never after each question:
    - Have they had an MRI before?
    - Are they claustrophobic?
    - Any metal implants, plates, screws, or metal fragments in their body or eyes?
    - Do they have a pacemaker, neurostimulator, or inner-ear implant?
    - Any surgeries or procedures related to the injury?
    - Their approximate height and weight.` : 'Ask if they have any relevant prior surgeries or procedures and record with record_screening.'}
-5. Scheduling: call get_available_slots, offer two or three options, and agree on one. If they want a different day/time, ask for it and try book_appointment - it validates the request and tells you if the office is closed. Once book_appointment returns success, repeat the confirmed date and time back to them.
+5. Scheduling: say something like "Let me check what we have open" while you call get_available_slots, offer two or three options, and agree on one. If they want a different day/time, ask for it and try book_appointment - it validates the request and tells you if the office is closed. Say "One moment while I book that" as you call book_appointment. Once it returns success, repeat the confirmed date and time back to them.
 6. If they refuse to schedule, call save_call_outcome with outcome "declined". If they ask to be called back later, use outcome "callback_requested".
 7. Close: remind them ${hasMri ? 'not to wear metal and ' : ''}to arrive 15 minutes early with a photo ID, tell them our number is ${callback} if anything changes, thank them, say goodbye, and call end_call.
 
@@ -57,6 +57,8 @@ Rules:
 - Do not give medical advice or discuss results, costs, insurance or legal matters. For such questions say the front desk at ${callback} can help, and note it in the outcome summary.
 - If the patient corrects the name, birth date or phone we have on file, record the correction with record_verification (dates always as MM/DD/YYYY).
 - Filler sounds ("uh", "um", "hello?", a single word in another language) are not answers. Never record a screening answer you didn't clearly hear - ask the question again in simpler words.
+- Background sounds are not the patient: TV, radio, other people talking in the room, or speech that has nothing to do with your question. Ignore them - don't answer them or record them - and if you can't tell, briefly repeat your question.
+- Never go silent while a tool runs: say a short natural phrase in the same turn ("Got it", "One moment").
 - If the patient interrupts you, stop and listen; don't restart your whole sentence, just continue from what they said.
 - After you call end_call, do not say anything else.
 - Say dates the way people do ("Tuesday, August 11th at 10 AM", "August 11th, 1993"), never as digits or slashes.
@@ -186,15 +188,19 @@ function buildTools(referralId, callSessionId) {
                 await session.save()
             }
 
-            // write APPT DATE / APPT TIME on every study row + the booking note on the first
+            // write APPT DATE / APPT TIME on every study row + the booking note on the first.
+            // Not awaited: the Sheets API takes 1-2s and the patient would hear silence.
             if (googleSheets.isConfigured() && referral.sheet?.rows?.length) {
                 const cells = []
                 for (const row of referral.sheet.rows) {
                     cells.push({ row, column: 'I', value: check.date })
                     cells.push({ row, column: 'J', value: check.time })
                 }
-                await googleSheets.updateCells(cells).catch(err => console.error('voiceStream: sheet appt update failed', err.message))
-                await googleSheets.appendToCell(referral.sheet.rows[0], 'K', note).catch(err => console.error('voiceStream: sheet note failed', err.message))
+                const firstRow = referral.sheet.rows[0]
+                googleSheets.updateCells(cells)
+                    .catch(err => console.error('voiceStream: sheet appt update failed', err.message))
+                    .then(() => googleSheets.appendToCell(firstRow, 'K', note))
+                    .catch(err => console.error('voiceStream: sheet note failed', err.message))
             }
             console.log(`voiceStream: booked ${check.date} ${check.time} for referral ${referralId}`)
             return `BOOKED: ${check.spoken}. Confirm this with the patient.`
@@ -245,7 +251,8 @@ function buildTools(referralId, callSessionId) {
                 twilioService.endCall(session.twilioCallSid).catch(err =>
                     console.error('voiceStream: hangup failed', err.message))
             }, 4 * 1000)
-            return 'hanging up - say nothing further'
+            // background result: no follow-up response, so nothing is spoken after the goodbye
+            return backgroundResult('hanging up')
         },
     })
 
@@ -302,7 +309,7 @@ async function handleConnection(twilioWebSocket, sessionId) {
                     // keeps background noise from cutting the agent off mid-sentence.
                     turnDetection: {
                         type: 'server_vad',
-                        threshold: Number(process.env.CALL_VAD_THRESHOLD || 0.6),
+                        threshold: Number(process.env.CALL_VAD_THRESHOLD || 0.7),
                         prefixPaddingMs: 300,
                         silenceDurationMs: Number(process.env.CALL_VAD_SILENCE_MS || 700),
                         interruptResponse: true,

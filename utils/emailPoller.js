@@ -2,12 +2,15 @@ const fs = require('fs')
 const path = require('path')
 const mongoose = require('mongoose')
 const imap = require('../services/imap')
+const { isActiveWorker } = require('./workerLease')
 const { REFERRAL_STATUS } = require('../constants/referralStatus')
 
 const EmailMessage = () => mongoose.model('emailMessages')
 const Referral = () => mongoose.model('referrals')
 
 const UPLOAD_ROOT = path.join(__dirname, '..', 'uploads')
+// stay well under MongoDB's 16MB document limit
+const MAX_STORED_BYTES = 15 * 1024 * 1024
 
 function safeFilename(name = '') {
     return String(name).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120) || 'attachment'
@@ -56,6 +59,7 @@ async function pollOnce() {
                     attachmentPath: filePath,
                     attachmentName: att.filename,
                     attachmentMime: att.contentType,
+                    attachmentData: att.content.length <= MAX_STORED_BYTES ? att.content : undefined,
                     status: REFERRAL_STATUS.RECEIVED,
                 }).save()
                 doc.referralIds.push(referral._id)
@@ -87,6 +91,7 @@ function startEmailPoller() {
         if (running) return
         running = true
         try {
+            if (!(await isActiveWorker())) return
             await pollOnce()
         } catch (err) {
             console.error('emailPoller error:', err.message)

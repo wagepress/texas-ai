@@ -17,6 +17,7 @@
     "smoke:dob": "node scripts/dob.smoke.js",
     "smoke:pipeline": "node scripts/pipeline.smoke.js",
     "smoke:webhooks": "node scripts/webhooks.smoke.js",
+    "smoke:lease": "node scripts/workerLease.smoke.js",
     "extract:file": "node scripts/extractFile.js",
     "seed:sheet": "node scripts/seedSheetHeader.js"
   },
@@ -24,6 +25,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.9",
     "@openai/agents": "^0.3.7",
     "@openai/agents-extensions": "^0.3.7",
     "body-parser": "^2.2.0",
@@ -38,6 +40,7 @@
     "mongoose-paginate-v2": "^1.9.1",
     "nodemon": "^3.1.10",
     "openai": "^6.15.0",
+    "pdfjs-dist": "^6.3.289",
     "twilio": "^5.10.3",
     "ws": "^8.18.3",
     "yup": "^1.7.1",

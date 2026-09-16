@@ -31,5 +31,8 @@ Domain notes:
   changes the workbook, change it there and in the smoke test.
 - The realtime voice agent (instructions + tools) lives in
   `sockets/voiceStream.js`; booking validation is `utils/slots.js`.
-- Offline checks: `npm run smoke:sheetrows`, `npm run smoke:slots`. Live
+- DOB parsing/matching (any spoken format, stored as MM/DD/YYYY) is
+  `utils/dob.js`; the agent never compares dates itself.
+- Offline checks: `npm run smoke:sheetrows`, `npm run smoke:slots`,
+  `npm run smoke:dob`. Live
   extraction check: `node scripts/extractFile.js <file>`.

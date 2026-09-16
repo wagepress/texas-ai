@@ -9,6 +9,7 @@ const { suggestSlots, validateSlot } = require('../utils/slots')
 const { finalizeCall } = require('../utils/callScheduler')
 const { CALL_OUTCOMES, REFERRAL_STATUS } = require('../constants/referralStatus')
 const { noteStamp, displayPhone } = require('../utils/helpers')
+const { formatDob, spokenDob, compareDob } = require('../utils/dob')
 
 const Referral = () => mongoose.model('referrals')
 const CallSession = () => mongoose.model('callSessions')
@@ -19,11 +20,12 @@ function agentInstructions(referral) {
     const studies = referral.studies.map(st => st.description).join(', ')
     const hasMri = referral.studies.some(st => /^MR/.test(st.description))
     const callback = displayPhone(process.env.CLINIC_CALLBACK_NUMBER || process.env.TWILIO_FROM_NUMBER || '')
+    const dob = referral.patient.dob ? `${formatDob(referral.patient.dob)} (${spokenDob(referral.patient.dob)})` : 'unknown'
 
-    return `You are a warm, professional scheduling assistant calling on behalf of Texas Imaging Network, a network of medical imaging centers in the Houston area. You are on a live phone call with a patient. Speak naturally, keep answers short, one question at a time. Never mention that you are an AI unless directly asked; if asked, answer honestly that you are an automated scheduling assistant.
+    return `You are a warm, friendly scheduling coordinator calling on behalf of Texas Imaging Network, a network of medical imaging centers in the Houston area. You are on a live phone call with a patient. Talk like a real person on the phone: relaxed, conversational, use contractions and short acknowledgements ("Perfect", "Got it", "Great, thank you"), keep each turn to one or two short sentences, and ask one question at a time. Don't sound scripted and don't repeat the same phrase twice in a row. Never mention that you are an AI unless directly asked; if asked, answer honestly that you are an automated scheduling assistant.
 
 Details for this call (do NOT read these out loud verbatim; use them to verify):
-- Patient: ${fullName || 'unknown'}, date of birth ${referral.patient.dob || 'unknown'}
+- Patient: ${fullName || 'unknown'}, date of birth ${dob}
 - Phone on file: ${displayPhone(referral.patient.primaryPhone) || 'unknown'}
 - Referring doctor: ${referral.doctor.name || 'their doctor'}
 - Ordered studies: ${studies || 'imaging studies'}
@@ -33,8 +35,13 @@ ${referral.attorney ? `- The referral came through their attorney/case: ${referr
 
 Call flow:
 1. Greet, say you are calling from Texas Imaging Network about the imaging study their doctor ${referral.doctor.name || ''} ordered, and ask if you are speaking with ${patientFirst}.
-2. If it is the wrong person or a wrong number, apologize, call save_call_outcome with outcome "wrong_number", say goodbye and call end_call.
-3. Verify identity: ask them to confirm their date of birth. Compare with the one on file. Then confirm the best callback phone number. Record everything with record_verification.
+2. It is a wrong number ONLY if the person clearly says they are not ${patientFirst} and don't know them (or there is no such person at this number). In that case apologize, call save_call_outcome with outcome "wrong_number", say goodbye and call end_call. If someone else answers but knows the patient, ask for the patient or a good time to call back instead.
+3. Verify identity: ask them to confirm their date of birth. People say dates in many ways ("8/11/93", "August eleventh, ninety-three", "the 11th of August 1993", day-first, etc.) - ALL of these are fine. Never judge the date yourself: pass what they said to check_date_of_birth and follow its answer.
+   - match: thank them and move on.
+   - unclear: casually ask them to say it again, e.g. "Sorry, could you give me the month, day and year?"
+   - mismatch: read back what you heard in plain words ("I have August 11th, 1993 - is that right?"). If they confirm their own date, accept it as a correction to our records and continue.
+   A date-of-birth problem is NEVER a wrong number and never a reason to end the call.
+   Then confirm the best callback phone number. Record everything with record_verification.
 4. ${hasMri ? `MRI safety screening - ask one at a time and record with record_screening:
    - Have they had an MRI before?
    - Are they claustrophobic?
@@ -48,7 +55,8 @@ Call flow:
 
 Rules:
 - Do not give medical advice or discuss results, costs, insurance or legal matters. For such questions say the front desk at ${callback} can help, and note it in the outcome summary.
-- If the patient corrects the name, birth date or phone we have on file, record the correction with record_verification.
+- If the patient corrects the name, birth date or phone we have on file, record the correction with record_verification (dates always as MM/DD/YYYY).
+- Say dates the way people do ("Tuesday, August 11th at 10 AM", "August 11th, 1993"), never as digits or slashes.
 - Always call save_call_outcome (or complete book_appointment) before the call ends so nothing is lost.
 - The line does NOT disconnect on its own: every conversation ends with you saying goodbye and then calling end_call - after booking, after a decline, after a wrong number, or when the patient stops responding.`
 }
@@ -81,6 +89,23 @@ function buildTools(referralId, callSessionId) {
         execute: async () => JSON.stringify(suggestSlots(6)),
     })
 
+    const checkDateOfBirth = tool({
+        name: 'check_date_of_birth',
+        description: 'Check the date of birth the patient gave against the one on file. Accepts any format; pass MM/DD/YYYY when you can, otherwise their words as said.',
+        parameters: z.object({
+            stated_dob: z.string().describe('What the patient said, e.g. "08/11/1993" or "August 11 1993"'),
+        }),
+        execute: async (input) => {
+            const referral = await Referral().findById(referralId)
+            if (!referral) return 'referral not found'
+            const check = compareDob(input.stated_dob, referral.patient.dob)
+            if (check.result === 'match') return 'match - date of birth confirmed'
+            if (check.result === 'no_dob_on_file') return `no_dob_on_file - accept what they said and record it as corrected_dob (${formatDob(input.stated_dob)})`
+            if (check.result === 'unclear') return 'unclear - could not understand that date; politely ask for month, day and year again'
+            return `mismatch - you heard ${spokenDob(check.heard)} (${check.heard}). Read it back to confirm; if they confirm, record it as corrected_dob and continue. This is NOT a wrong number.`
+        },
+    })
+
     const recordVerification = tool({
         name: 'record_verification',
         description: 'Record the result of the identity check and any corrected contact info.',
@@ -88,7 +113,7 @@ function buildTools(referralId, callSessionId) {
             identity_confirmed: z.boolean(),
             dob_matches: z.boolean().nullable(),
             corrected_phone: z.string().nullable(),
-            corrected_dob: z.string().nullable(),
+            corrected_dob: z.string().nullable().describe('MM/DD/YYYY'),
             notes: z.string().nullable(),
         }),
         execute: async (input) => {
@@ -98,7 +123,7 @@ function buildTools(referralId, callSessionId) {
             referral.call.correctedInfo = {
                 ...(referral.call.correctedInfo || {}),
                 ...(input.corrected_phone ? { phone: input.corrected_phone } : {}),
-                ...(input.corrected_dob ? { dob: input.corrected_dob } : {}),
+                ...(input.corrected_dob ? { dob: formatDob(input.corrected_dob) } : {}),
                 ...(input.notes ? { verificationNotes: input.notes } : {}),
                 dobMatches: input.dob_matches,
             }
@@ -221,7 +246,7 @@ function buildTools(referralId, callSessionId) {
         },
     })
 
-    return [getAvailableSlots, recordVerification, recordScreening, bookAppointment, saveCallOutcome, endCall]
+    return [getAvailableSlots, checkDateOfBirth, recordVerification, recordScreening, bookAppointment, saveCallOutcome, endCall]
 }
 
 function extractTranscript(item) {
@@ -263,7 +288,7 @@ async function handleConnection(twilioWebSocket, sessionId) {
         model: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime',
         config: {
             audio: {
-                output: { voice: process.env.OPENAI_REALTIME_VOICE || 'alloy' },
+                output: { voice: process.env.OPENAI_REALTIME_VOICE || 'marin' },
                 input: { transcription: { model: 'gpt-4o-mini-transcribe' } },
             },
         },

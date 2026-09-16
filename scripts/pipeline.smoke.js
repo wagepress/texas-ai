@@ -167,10 +167,16 @@ async function main() {
     const tools = buildTools(r1._id.toString(), session._id.toString())
     const byName = Object.fromEntries(tools.map(t => [t.name, t]))
     assert.deepStrictEqual(Object.keys(byName).sort(),
-        ['book_appointment', 'end_call', 'get_available_slots', 'record_screening', 'record_verification', 'save_call_outcome'])
+        ['book_appointment', 'check_date_of_birth', 'end_call', 'get_available_slots', 'record_screening', 'record_verification', 'save_call_outcome'])
 
     const slots = JSON.parse(await byName.get_available_slots.invoke({}, '{}'))
     assert.ok(slots.length >= 3, 'slots offered')
+
+    // r1's DOB on file is 08/11/1993; any spoken format must match, a different date must not end the call
+    const dobOk = await byName.check_date_of_birth.invoke({}, JSON.stringify({ stated_dob: 'August 11th, 93' }))
+    assert.ok(String(dobOk).startsWith('match'), dobOk)
+    const dobOff = await byName.check_date_of_birth.invoke({}, JSON.stringify({ stated_dob: '8/12/1993' }))
+    assert.ok(String(dobOff).startsWith('mismatch') && String(dobOff).includes('NOT a wrong number'), dobOff)
 
     await byName.record_verification.invoke({}, JSON.stringify({
         identity_confirmed: true, dob_matches: true, corrected_phone: null, corrected_dob: null, notes: null,

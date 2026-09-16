@@ -14,6 +14,7 @@
     "start:prod": "node index.js",
     "smoke:sheetrows": "node scripts/sheetRows.smoke.js",
     "smoke:slots": "node scripts/slots.smoke.js",
+    "smoke:dob": "node scripts/dob.smoke.js",
     "smoke:pipeline": "node scripts/pipeline.smoke.js",
     "smoke:webhooks": "node scripts/webhooks.smoke.js",
     "extract:file": "node scripts/extractFile.js",

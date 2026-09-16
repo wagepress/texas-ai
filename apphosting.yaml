@@ -46,7 +46,7 @@ env:
   - variable: OPENAI_REALTIME_MODEL
     value: gpt-realtime
   - variable: OPENAI_REALTIME_VOICE
-    value: alloy
+    value: marin
   - variable: EXTRACTION_INTERVAL_MS
     value: "20000"
   - variable: DUPLICATE_WINDOW_DAYS
